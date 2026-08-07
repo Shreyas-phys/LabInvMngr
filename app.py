@@ -1,19 +1,26 @@
 import streamlit as st
 import pandas as pd
+import requests
+from io import BytesIO
 
 st.set_page_config(page_title="Physics Lab Inventory", layout="wide")
 
-st.title("Physics Lab Inventory — Maintenance View (MVP)")
-
-uploaded_file = "test_directory.xlsx"  # local test copy, same folder as app.py
+st.title("Physics Lab Inventory — Maintenance View (Preliminary)")
 
 @st.cache_data
-def load_data(path):
-    df = pd.read_excel(path, sheet_name="Storage Room Directory")
+def load_data():
+    url = st.secrets["onedrive_url"]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()  # will raise a clear error if still blocked
+    df = pd.read_excel(BytesIO(response.content), sheet_name="Storage Room Directory")
     df["Shelf"] = df["Shelf"].astype(str)
     return df
 
-directory = load_data(uploaded_file)
+directory = load_data()
 
 
 # --- Derived status, no separate Retired column needed ---
