@@ -55,11 +55,14 @@ def compute_status(row):
 directory["Status"] = directory.apply(compute_status, axis=1)
 
 # ================= PAGE NAVIGATION =================
-page = st.sidebar.radio("View", ["Course Overview", "Maintenance View", "Browse by Experiment"])
+page = st.sidebar.radio(
+    "View",
+    ["Course Overview", "Storage Room Directory", "Browse by Experiment", "Build a Demo / Equipment Check"]
+)
 
 # ================= MAINTENANCE VIEW =================
-if page == "Maintenance View":
-    st.title("Physics Lab Inventory — Maintenance View")
+if page == "Storage Room Directory":
+    st.title("Storage Room Directory")
 
     col1, col2, col3 = st.columns(3)
     category_filter = col1.multiselect("Category", sorted(directory["Category"].dropna().unique()))
@@ -153,3 +156,85 @@ elif page == "Course Overview":
         ]
 
     st.dataframe(filtered_dept, width="stretch")
+
+# ================= Equipment Check =================
+elif page == "Build a Demo / Equipment Check":
+    st.title("Build a Demo / Equipment Check")
+    st.caption(
+        "Build a list of items for a new demo idea. Select an existing item, or type "
+        "a new one if it's not in our inventory yet — it'll still show up, flagged as unavailable."
+    )
+
+    if "demo_items" not in st.session_state:
+        st.session_state.demo_items = []
+
+    # --- Add item ---
+    existing_names = sorted(directory["Name"].dropna().unique())
+    col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+    with col1:
+        dropdown_pick = st.selectbox("Select existing item", ["—"] + existing_names, key="item_picker")
+    with col2:
+        typed_pick = st.text_input("...or type a new item", key="new_item_name")
+    with col3:
+        qty_needed = st.number_input("Qty needed", min_value=1, value=1, step=1, key="qty_picker")
+    with col4:
+        st.write("")
+        st.write("")
+        if st.button("➕ Add"):
+            item_name = typed_pick.strip() if typed_pick.strip() else (dropdown_pick if dropdown_pick != "—" else "")
+            if item_name:
+                st.session_state.demo_items.append(
+                    {"Item_Name": item_name, "Quantity_Needed": qty_needed}
+                )
+
+    # --- Display running list ---
+    if st.session_state.demo_items:
+        st.subheader("Items for this demo")
+
+        check_df = pd.DataFrame(st.session_state.demo_items)
+        merged = check_df.merge(
+            directory[["Name", "Qty_Working", "Category", "Shelf"]],
+            left_on="Item_Name", right_on="Name", how="left"
+        )
+
+        def check_status(row):
+            if pd.isna(row["Qty_Working"]):
+                return "🚫 Not in inventory"
+            elif row["Qty_Working"] >= row["Quantity_Needed"]:
+                return "✅ Ready"
+            else:
+                return "❌ Short"
+
+        merged["Status"] = merged.apply(check_status, axis=1)
+
+        st.dataframe(
+            merged[["Item_Name", "Quantity_Needed", "Qty_Working", "Category", "Shelf", "Status"]],
+            width="stretch"
+        )
+
+        overall = "✅ Ready" if (merged["Status"] == "✅ Ready").all() else "❌ Missing or short on items"
+        st.metric("Overall Status", overall)
+
+        remove_choice = st.selectbox(
+            "Remove an item", ["—"] + [d["Item_Name"] for d in st.session_state.demo_items]
+        )
+        if remove_choice != "—" and st.button("✖ Remove selected"):
+            st.session_state.demo_items = [
+                d for d in st.session_state.demo_items if d["Item_Name"] != remove_choice
+            ]
+            st.rerun()
+    else:
+        st.info("No items added yet.")
+
+    st.divider()
+
+    st.subheader("Ask an AI for suggestions")
+    st.caption(
+        "Type your own question first (e.g. \"do we have what we need for this demo?\" or "
+        "\"suggest an experiment using only these items\"), then paste the inventory list below it."
+    )
+
+    with st.expander("Show inventory list to copy"):
+        item_names_only = sorted(directory["Name"].dropna().unique())
+        inventory_list_text = "\n".join(f"- {name}" for name in item_names_only)
+        st.code(inventory_list_text, language=None)
