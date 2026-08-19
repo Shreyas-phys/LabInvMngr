@@ -9,9 +9,16 @@ st.set_page_config(page_title="MCLA Physics Lab Inventory", layout="wide")
 def load_workbook():
     url = st.secrets["onedrive_url"]
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    return pd.read_excel(BytesIO(response.content), sheet_name=None)
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        return pd.read_excel(BytesIO(response.content), sheet_name=None)
+    except Exception:
+        st.error(
+            "Couldn't load the inventory data. This sometimes happens right after the app "
+            "wakes up from sleep — try refreshing the page in a few seconds."
+        )
+        st.stop()
 
 if st.sidebar.button("🔄 Refresh data"):
     st.cache_data.clear()
@@ -34,10 +41,18 @@ dept["Course Title"] = dept["Course Title"].astype(str).str.strip()
 course_map = dict(zip(dept["Course Code"], dept["Course Title"]))
 
 # --- Auto-derive Used_In_Experiments from Experiment Directory ---
-lookup = experiments.groupby("Item_Name")["Experiment_Name"].apply(
-    lambda names: ", ".join(sorted(set(names)))
-)
-directory["Used_In_Experiments"] = directory["Name"].map(lookup).fillna("—")
+try:
+    lookup = experiments.groupby("Item_Name")["Experiment_Name"].apply(
+        lambda names: ", ".join(sorted(set(names.dropna())))
+    )
+    directory["Used_In_Experiments"] = directory["Name"].map(lookup).fillna("—")
+except Exception:
+    st.warning(
+        "⚠️ The Experiment Directory looks like it's being edited right now (some rows are "
+        "incomplete). Please finish filling out the row you're working on, then refresh this "
+        "page in a minute."
+    )
+    directory["Used_In_Experiments"] = "—"
 
 # --- Derived status for Maintenance View ---
 def compute_status(row):
@@ -57,7 +72,8 @@ directory["Status"] = directory.apply(compute_status, axis=1)
 # ================= PAGE NAVIGATION =================
 page = st.sidebar.radio(
     "View",
-    ["Course Overview", "Storage Room Directory", "Browse by Experiment", "Build a Demo / Equipment Check"]
+    ["Course Overview", "Storage Room Directory", "Browse by Prebuilt Experiment/Demo",
+     "Build a Demo / Equipment Check", "Experiment/Demo Directory"]
 )
 
 # ================= MAINTENANCE VIEW =================
@@ -81,8 +97,8 @@ if page == "Storage Room Directory":
     st.caption(f"Showing {len(filtered)} of {len(directory)} items")
 
 # ================= BROWSE BY EXPERIMENT =================
-elif page == "Browse by Experiment":
-    st.title("Browse by Experiment")
+elif page == "Browse by Prebuilt Experiment/Demo":
+    st.title("Browse by Prebuilt Experiment/Demo")
     st.caption(
         "Pick a course and experiment, enter your station count, and see what's ready and what's short. "
         "Live from the storage room inventory Excel file."
@@ -238,3 +254,24 @@ elif page == "Build a Demo / Equipment Check":
         item_names_only = sorted(directory["Name"].dropna().unique())
         inventory_list_text = "\n".join(f"- {name}" for name in item_names_only)
         st.code(inventory_list_text, language=None)
+
+
+elif page == "Experiment/Demo Directory":
+    st.title("List of Demonstration Experiments")
+    st.caption("Browse past experiments by topic. Click an experiment/demo to open its write-up.")
+
+    exp_summary = experiments.dropna(subset=["Experiment_Name"]).drop_duplicates(subset=["Experiment_Name"])
+
+    categories = sorted(exp_summary["Topic/Category"].dropna().unique())
+
+    for category in categories:
+        st.subheader(category)
+        cat_experiments = exp_summary[exp_summary["Topic/Category"] == category].sort_values("Experiment_Name")
+
+        for _, row in cat_experiments.iterrows():
+            name = row["Experiment_Name"]
+            link = row.get("Links", None)
+            if pd.notna(link) and str(link).strip() and str(link).lower() != "nan":
+                st.markdown(f"- [{name}]({link})")
+            else:
+                st.markdown(f"- {name} *(write-up not available)*")
