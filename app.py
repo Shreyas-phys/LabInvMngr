@@ -257,7 +257,7 @@ elif page == "Build a Demo / Equipment Check":
 
 
 elif page == "Experiment/Demo Directory":
-    st.title("List of Demonstration Experiments")
+    st.title("List of Demos and Experiments")
     st.caption("Browse past experiments by topic. Click an experiment/demo to open its write-up.")
 
     exp_summary = experiments.dropna(subset=["Experiment_Name"]).drop_duplicates(subset=["Experiment_Name"])
