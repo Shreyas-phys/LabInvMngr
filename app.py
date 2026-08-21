@@ -33,6 +33,15 @@ STATUS_TINTS = {
 def style_status(val):
     return STATUS_TINTS.get(val, "")
 
+def to_clean_int(series):
+    """Round to whole numbers and store as pandas' nullable Int64 dtype, so
+    columns show as clean integers (24, not 24.0) while still allowing blank
+    cells for items that haven't been catalogued yet."""
+    try:
+        return series.round().astype("Int64")
+    except Exception:
+        return series
+
 @st.cache_data(ttl=3600)
 def load_workbook():
     url = st.secrets["onedrive_url"]
@@ -56,10 +65,14 @@ xls = load_workbook()
 directory = xls["Storage Room Directory"].copy()
 directory["Name"] = directory["Name"].astype(str).str.strip()
 directory["Shelf"] = directory["Shelf"].astype(str)
+directory["Quantity"] = to_clean_int(directory["Quantity"])
+directory["Qty_Working"] = to_clean_int(directory["Qty_Working"])
+directory["Last_Checked"] = pd.to_datetime(directory["Last_Checked"], errors="coerce").dt.date
 
 experiments = xls["Experiment Directory"].copy()
 experiments["Item_Name"] = experiments["Item_Name"].astype(str).str.strip()
 experiments["Experiment_Name"] = experiments["Experiment_Name"].astype(str).str.strip()
+experiments["Quantity/Station"] = to_clean_int(experiments["Quantity/Station"])
 
 dept = xls["Department Overview"].copy()
 dept.columns = dept.columns.str.strip().str.rstrip(":")
@@ -97,7 +110,7 @@ directory["Status"] = directory.apply(compute_status, axis=1)
 # ================= PAGE IDENTITY =================
 # Internal keys drive all logic below. PAGE_LABELS is the ONLY thing you need to
 # edit to rename a page again later — nothing else in the file references the text.
-PAGE_KEYS = ["experiment_library","check_experiment", "build_demo", "inventory","courses" ]
+PAGE_KEYS = ["experiment_library", "check_experiment", "build_demo", "inventory", "courses"]
 
 PAGE_LABELS = {
     "courses": "Courses",
@@ -114,7 +127,6 @@ PAGE_ICONS = {
     "build_demo": "🧪",
     "experiment_library": "📚",
 }
-
 
 # ================= SIDEBAR =================
 st.sidebar.markdown("### 🔬 MCLA Physics Lab Inventory")
@@ -166,12 +178,11 @@ if page == "inventory":
     if filtered.empty:
         st.info("No items match these filters. Try clearing one of the filters above.")
     else:
-        display_cols = ["Name"] + [c for c in filtered.columns if c != "Name"]
-        st.dataframe(
-            filtered[display_cols].style.map(style_status, subset=["Status"]),
-            width="stretch",
-            hide_index=True,
-        )
+        # Name as the index (rather than hide_index) so it renders pinned/frozen on
+        # the left as the table scrolls horizontally — same behavior the default
+        # row-number index used to have.
+        display_df = filtered.set_index("Name")
+        st.dataframe(display_df.style.map(style_status, subset=["Status"]), width="stretch")
         st.caption(f"Showing {len(filtered)} of {len(directory)} items")
 
 # ================= CHECK AN EXPERIMENT =================
@@ -219,13 +230,14 @@ elif page == "check_experiment":
         num_stations = st.number_input("👥 Number of stations", min_value=1, value=1, step=1)
 
         exp_rows = experiments[experiments["Experiment_Name"] == selected_experiment].copy()
-        exp_rows["Total_Needed"] = exp_rows["Quantity/Station"] * num_stations
+        exp_rows["Total_Needed"] = to_clean_int(exp_rows["Quantity/Station"] * num_stations)
         exp_rows = exp_rows.drop(columns=["Category", "Shelf"], errors="ignore")
 
         merged = exp_rows.merge(
             directory[["Name", "Qty_Working", "Category", "Shelf", "Last_Checked"]],
             left_on="Item_Name", right_on="Name", how="left"
         )
+        merged["Qty_Working"] = to_clean_int(merged["Qty_Working"])
 
         def item_status(row):
             if pd.isna(row["Name"]):
@@ -252,8 +264,8 @@ elif page == "check_experiment":
                 st.button("📄 PDF", key="pdf_disabled_check_page", disabled=True, help="Write-up not available")
 
             display_cols = merged[["Item_Name", "Quantity/Station", "Total_Needed", "Qty_Working",
-                                    "Category", "Shelf", "Status"]]
-            st.dataframe(display_cols.style.map(style_status, subset=["Status"]), width="stretch", hide_index=True)
+                                    "Category", "Shelf", "Status"]].set_index("Item_Name")
+            st.dataframe(display_cols.style.map(style_status, subset=["Status"]), width="stretch")
 
 # ================= COURSES =================
 elif page == "courses":
@@ -308,10 +320,13 @@ elif page == "build_demo":
                 directory[["Name", "Qty_Working", "Category", "Shelf"]],
                 left_on="Item_Name", right_on="Name", how="left"
             )
+            merged["Qty_Working"] = to_clean_int(merged["Qty_Working"])
 
             def check_status(row):
-                if pd.isna(row["Qty_Working"]):
+                if pd.isna(row["Name"]):
                     return "🚫 Not in inventory"
+                elif pd.isna(row["Qty_Working"]):
+                    return "❓ Not catalogued"
                 elif row["Qty_Working"] >= row["Quantity_Needed"]:
                     return "✅ Ready"
                 else:
@@ -319,8 +334,8 @@ elif page == "build_demo":
 
             merged["Status"] = merged.apply(check_status, axis=1)
 
-            display_cols = merged[["Item_Name", "Quantity_Needed", "Qty_Working", "Category", "Shelf", "Status"]]
-            st.dataframe(display_cols.style.map(style_status, subset=["Status"]), width="stretch", hide_index=True)
+            display_cols = merged[["Item_Name", "Quantity_Needed", "Qty_Working", "Category", "Shelf", "Status"]].set_index("Item_Name")
+            st.dataframe(display_cols.style.map(style_status, subset=["Status"]), width="stretch")
 
             overall = "✅ Ready" if (merged["Status"] == "✅ Ready").all() else "❌ Missing or short on items"
             st.metric("Overall Status", overall)
@@ -369,7 +384,7 @@ elif page == "experiment_library":
             with st.container(border=True):
                 col1, col2, col3 = st.columns([1, 1, 5])
 
-                with col3:
+                with col1:
                     if st.button("🔍 Check", key=f"check_{name}"):
                         st.session_state.jump_experiment = name
                         st.session_state.pending_page = "check_experiment"
@@ -381,5 +396,5 @@ elif page == "experiment_library":
                     else:
                         st.button("📄 PDF", key=f"pdf_disabled_{name}", disabled=True, help="Write-up not available")
 
-                with col1:
+                with col3:
                     st.write(name)
