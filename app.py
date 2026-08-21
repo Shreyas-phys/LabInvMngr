@@ -222,7 +222,9 @@ elif page == "check_experiment":
         )
 
         def item_status(row):
-            if pd.isna(row["Qty_Working"]):
+            if pd.isna(row["Name"]):
+                return "🚫 Not in inventory"
+            elif pd.isna(row["Qty_Working"]):
                 return "❓ Not catalogued"
             elif row["Qty_Working"] >= row["Total_Needed"]:
                 return "✅ Ready"
