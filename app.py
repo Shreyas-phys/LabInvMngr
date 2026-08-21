@@ -70,11 +70,19 @@ def compute_status(row):
 directory["Status"] = directory.apply(compute_status, axis=1)
 
 # ================= PAGE NAVIGATION =================
-page = st.sidebar.radio(
-    "View",
-    ["Course Overview", "Storage Room Directory", "Browse by Prebuilt Experiment/Demo",
-     "Build a Demo / Equipment Check", "Experiment/Demo Directory"]
-)
+PAGES = ["Course Overview", "Experiment/Demo Directory", "Browse by Prebuilt Experiment/Demo", "Storage Room Directory", 
+         "Build a Demo / Equipment Check"]
+
+if "nav_page" not in st.session_state:
+    st.session_state.nav_page = PAGES[0]
+
+# Deliberately no `key=` on this radio. If it had one, the "Check" buttons on the
+# Experiment/Demo Directory page (further down the script) couldn't set that key's
+# session_state after the radio has already been created earlier in the same run --
+# Streamlit raises StreamlitAPIException for that. Driving it via `index` + a plain
+# session_state variable ("nav_page") that we sync each run avoids the problem.
+page = st.sidebar.radio("View", PAGES, index=PAGES.index(st.session_state.nav_page))
+st.session_state.nav_page = page
 
 # ================= MAINTENANCE VIEW =================
 if page == "Storage Room Directory":
@@ -112,7 +120,16 @@ elif page == "Browse by Prebuilt Experiment/Demo":
     course_display = {code: f"{code} — {course_map.get(code, 'Unknown')}" for code in all_courses}
     display_to_code = {v: k for k, v in course_display.items()}
 
-    selected_display = st.selectbox("Course", ["All"] + list(course_display.values()))
+    # If we arrived here via a "Check" button from the Experiment/Demo Directory page,
+    # force the course filter to "All" so the target experiment is guaranteed to appear,
+    # no matter which course(s) it's tagged with. Must be set *before* the selectbox below
+    # is instantiated -- that's the allowed pattern (setting after instantiation is not).
+    if "jump_experiment" in st.session_state:
+        st.session_state.browse_course_select = "All"
+
+    selected_display = st.selectbox(
+        "Course", ["All"] + list(course_display.values()), key="browse_course_select"
+    )
     selected_course = "All" if selected_display == "All" else display_to_code[selected_display]
 
     if selected_course == "All":
@@ -126,7 +143,14 @@ elif page == "Browse by Prebuilt Experiment/Demo":
     if not experiment_names:
         st.info("No experiments found for this course yet.")
     else:
-        selected_experiment = st.selectbox("Experiment", experiment_names)
+        # Preselect the experiment if we jumped here, then consume the flag so it
+        # doesn't keep overriding manual selections on later visits to this page.
+        if "jump_experiment" in st.session_state:
+            if st.session_state.jump_experiment in experiment_names:
+                st.session_state.browse_experiment_select = st.session_state.jump_experiment
+            del st.session_state["jump_experiment"]
+
+        selected_experiment = st.selectbox("Experiment", experiment_names, key="browse_experiment_select")
 
         num_stations = st.number_input("Number of stations", min_value=1, value=1, step=1)
 
@@ -184,7 +208,6 @@ elif page == "Build a Demo / Equipment Check":
     if "demo_items" not in st.session_state:
         st.session_state.demo_items = []
 
-    # --- Add item ---
     existing_names = sorted(directory["Name"].dropna().unique())
     col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
     with col1:
@@ -203,7 +226,6 @@ elif page == "Build a Demo / Equipment Check":
                     {"Item_Name": item_name, "Quantity_Needed": qty_needed}
                 )
 
-    # --- Display running list ---
     if st.session_state.demo_items:
         st.subheader("Items for this demo")
 
@@ -255,10 +277,10 @@ elif page == "Build a Demo / Equipment Check":
         inventory_list_text = "\n".join(f"- {name}" for name in item_names_only)
         st.code(inventory_list_text, language=None)
 
-
+# ================= EXPERIMENT / DEMO DIRECTORY =================
 elif page == "Experiment/Demo Directory":
     st.title("List of Demos and Experiments")
-    st.caption("Browse past experiments by topic. Click an experiment/demo to open its write-up.")
+    st.caption("Browse past experiments by topic. Use 🔍 Check for live inventory status, or 📄 PDF to open the write-up.")
 
     exp_summary = experiments.dropna(subset=["Experiment_Name"]).drop_duplicates(subset=["Experiment_Name"])
 
@@ -271,7 +293,22 @@ elif page == "Experiment/Demo Directory":
         for _, row in cat_experiments.iterrows():
             name = row["Experiment_Name"]
             link = row.get("Links", None)
-            if pd.notna(link) and str(link).strip() and str(link).lower() != "nan":
-                st.markdown(f"- [{name}]({link})")
-            else:
-                st.markdown(f"- {name} *(write-up not available)*")
+            has_link = pd.notna(link) and str(link).strip() and str(link).lower() != "nan"
+
+            with st.container(border=True):
+                col1, col2, col3 = st.columns([1, 1, 5])
+
+                with col1:
+                    if st.button("🔍 Check", key=f"check_{name}"):
+                        st.session_state.jump_experiment = name
+                        st.session_state.nav_page = "Browse by Prebuilt Experiment/Demo"
+                        st.rerun()
+
+                with col2:
+                    if has_link:
+                        st.link_button("📄 PDF", link, key=f"pdf_{name}")
+                    else:
+                        st.button("📄 PDF", key=f"pdf_disabled_{name}", disabled=True, help="Write-up not available")
+
+                with col3:
+                    st.write(name)
