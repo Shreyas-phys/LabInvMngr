@@ -174,7 +174,8 @@ elif page == "check_experiment":
     st.title(f"{PAGE_ICONS['check_experiment']} {PAGE_LABELS['check_experiment']}")
     st.caption(
         "Pick a course and experiment, enter your station count, and see what's ready and what's short. "
-        "Live from the storage room inventory Excel file."
+        "Live from the storage room inventory Excel file. If a write-up is available for the experiment, "
+        "use the 📄 PDF button to open it."
     )
 
     all_courses = sorted(set(
