@@ -3,7 +3,35 @@ import pandas as pd
 import requests
 from io import BytesIO
 
-st.set_page_config(page_title="MCLA Physics Lab Inventory", layout="wide")
+st.set_page_config(page_title="MCLA Physics Lab Inventory", layout="wide", page_icon="🔬")
+
+# ================= GLOBAL STYLE =================
+st.markdown("""
+<style>
+    .block-container { padding-top: 2rem; padding-bottom: 3rem; }
+    div[data-testid="stMetric"] {
+        background-color: var(--secondary-background-color);
+        border: 1px solid var(--primary-color);
+        border-radius: 10px;
+        padding: 12px 16px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+STATUS_TINTS = {
+    "Fully working":              "background-color:#E3F3E1; color:#1F6D1B;",
+    "✅ Ready":                    "background-color:#E3F3E1; color:#1F6D1B;",
+    "Partial":                     "background-color:#FFF6D8; color:#8A6D00;",
+    "Not yet catalogued":          "background-color:#E3F1FB; color:#045A8D;",
+    "❓ Not catalogued":           "background-color:#E3F1FB; color:#045A8D;",
+    "Retired/Out of service":      "background-color:#ECECEC; color:#555555;",
+    "🚫 Not in inventory":         "background-color:#ECECEC; color:#555555;",
+    "⚠️ Check: working > owned":  "background-color:#FBE3E3; color:#B00020;",
+    "❌ Short":                    "background-color:#FBE3E3; color:#B00020;",
+}
+
+def style_status(val):
+    return STATUS_TINTS.get(val, "")
 
 @st.cache_data(ttl=3600)
 def load_workbook():
@@ -33,14 +61,12 @@ experiments = xls["Experiment Directory"].copy()
 experiments["Item_Name"] = experiments["Item_Name"].astype(str).str.strip()
 experiments["Experiment_Name"] = experiments["Experiment_Name"].astype(str).str.strip()
 
-# --- Department Overview, loaded once, used by multiple pages ---
 dept = xls["Department Overview"].copy()
 dept.columns = dept.columns.str.strip().str.rstrip(":")
 dept["Course Code"] = dept["Course Code"].astype(str).str.strip()
 dept["Course Title"] = dept["Course Title"].astype(str).str.strip()
 course_map = dict(zip(dept["Course Code"], dept["Course Title"]))
 
-# --- Auto-derive Used_In_Experiments from Experiment Directory ---
 try:
     lookup = experiments.groupby("Item_Name")["Experiment_Name"].apply(
         lambda names: ", ".join(sorted(set(names.dropna())))
@@ -54,7 +80,6 @@ except Exception:
     )
     directory["Used_In_Experiments"] = "—"
 
-# --- Derived status for Maintenance View ---
 def compute_status(row):
     if pd.isna(row["Qty_Working"]):
         return "Not yet catalogued"
@@ -69,29 +94,66 @@ def compute_status(row):
 
 directory["Status"] = directory.apply(compute_status, axis=1)
 
-# ================= PAGE NAVIGATION =================
-PAGES = ["Course Overview", "Experiment/Demo Directory", "Browse by Prebuilt Experiment/Demo", "Storage Room Directory", 
-         "Build a Demo / Equipment Check"]
+# ================= PAGE IDENTITY =================
+# Internal keys drive all logic below. PAGE_LABELS is the ONLY thing you need to
+# edit to rename a page again later — nothing else in the file references the text.
+PAGE_KEYS = ["experiment_library","check_experiment", "build_demo", "inventory","courses" ]
 
-if "nav_page" not in st.session_state:
-    st.session_state.nav_page = PAGES[0]
+PAGE_LABELS = {
+    "courses": "Courses",
+    "inventory": "Inventory",
+    "check_experiment": "Check an Experiment/Demo",
+    "build_demo": "Build a New Demo",
+    "experiment_library": "Experiment/Demo Library",
+}
 
-# Deliberately no `key=` on this radio. If it had one, the "Check" buttons on the
-# Experiment/Demo Directory page (further down the script) couldn't set that key's
-# session_state after the radio has already been created earlier in the same run --
-# Streamlit raises StreamlitAPIException for that. Driving it via `index` + a plain
-# session_state variable ("nav_page") that we sync each run avoids the problem.
-page = st.sidebar.radio("View", PAGES, index=PAGES.index(st.session_state.nav_page))
-st.session_state.nav_page = page
+PAGE_ICONS = {
+    "courses": "🎓",
+    "inventory": "📦",
+    "check_experiment": "🔍",
+    "build_demo": "🧪",
+    "experiment_library": "📚",
+}
 
-# ================= MAINTENANCE VIEW =================
-if page == "Storage Room Directory":
-    st.title("Storage Room Directory")
+
+# ================= SIDEBAR =================
+st.sidebar.markdown("### 🔬 MCLA Physics Lab Inventory")
+st.sidebar.caption("Storage rooms 111B & 109")
+st.sidebar.divider()
+
+if "nav_radio" not in st.session_state:
+    st.session_state.nav_radio = PAGE_KEYS[0]
+
+# Apply any redirect requested elsewhere (e.g. a "Check" button) BEFORE the radio
+# below is created. Doing it here — rather than inside the button's branch further
+# down the script — avoids Streamlit's error for setting a widget's own state after
+# that widget has already rendered earlier in the same run.
+if "pending_page" in st.session_state:
+    st.session_state.nav_radio = st.session_state.pop("pending_page")
+
+page = st.sidebar.radio(
+    "View", PAGE_KEYS,
+    format_func=lambda k: f"{PAGE_ICONS[k]}  {PAGE_LABELS[k]}",
+    key="nav_radio",
+)
+
+# ================= INVENTORY =================
+if page == "inventory":
+    st.title(f"{PAGE_ICONS['inventory']} {PAGE_LABELS['inventory']}")
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Total items", len(directory))
+    k2.metric("Fully working", int((directory["Status"] == "Fully working").sum()))
+    k3.metric("Needs attention", int(directory["Status"].isin(
+        ["Partial", "⚠️ Check: working > owned"]).sum()))
+    k4.metric("Not yet catalogued", int((directory["Status"] == "Not yet catalogued").sum()))
+
+    st.divider()
 
     col1, col2, col3 = st.columns(3)
-    category_filter = col1.multiselect("Category", sorted(directory["Category"].dropna().unique()))
-    status_filter = col2.multiselect("Status", sorted(directory["Status"].unique()))
-    search = col3.text_input("Search by name")
+    category_filter = col1.multiselect("📁 Category", sorted(directory["Category"].dropna().unique()))
+    status_filter = col2.multiselect("🚦 Status", sorted(directory["Status"].unique()))
+    search = col3.text_input("🔎 Search by name")
 
     filtered = directory.copy()
     if category_filter:
@@ -101,12 +163,15 @@ if page == "Storage Room Directory":
     if search:
         filtered = filtered[filtered["Name"].str.contains(search, case=False, na=False)]
 
-    st.dataframe(filtered, width="stretch")
-    st.caption(f"Showing {len(filtered)} of {len(directory)} items")
+    if filtered.empty:
+        st.info("No items match these filters. Try clearing one of the filters above.")
+    else:
+        st.dataframe(filtered.style.map(style_status, subset=["Status"]), width="stretch")
+        st.caption(f"Showing {len(filtered)} of {len(directory)} items")
 
-# ================= BROWSE BY EXPERIMENT =================
-elif page == "Browse by Prebuilt Experiment/Demo":
-    st.title("Browse by Prebuilt Experiment/Demo")
+# ================= CHECK AN EXPERIMENT =================
+elif page == "check_experiment":
+    st.title(f"{PAGE_ICONS['check_experiment']} {PAGE_LABELS['check_experiment']}")
     st.caption(
         "Pick a course and experiment, enter your station count, and see what's ready and what's short. "
         "Live from the storage room inventory Excel file."
@@ -120,15 +185,11 @@ elif page == "Browse by Prebuilt Experiment/Demo":
     course_display = {code: f"{code} — {course_map.get(code, 'Unknown')}" for code in all_courses}
     display_to_code = {v: k for k, v in course_display.items()}
 
-    # If we arrived here via a "Check" button from the Experiment/Demo Directory page,
-    # force the course filter to "All" so the target experiment is guaranteed to appear,
-    # no matter which course(s) it's tagged with. Must be set *before* the selectbox below
-    # is instantiated -- that's the allowed pattern (setting after instantiation is not).
     if "jump_experiment" in st.session_state:
         st.session_state.browse_course_select = "All"
 
     selected_display = st.selectbox(
-        "Course", ["All"] + list(course_display.values()), key="browse_course_select"
+        "🎓 Course", ["All"] + list(course_display.values()), key="browse_course_select"
     )
     selected_course = "All" if selected_display == "All" else display_to_code[selected_display]
 
@@ -143,16 +204,13 @@ elif page == "Browse by Prebuilt Experiment/Demo":
     if not experiment_names:
         st.info("No experiments found for this course yet.")
     else:
-        # Preselect the experiment if we jumped here, then consume the flag so it
-        # doesn't keep overriding manual selections on later visits to this page.
         if "jump_experiment" in st.session_state:
             if st.session_state.jump_experiment in experiment_names:
                 st.session_state.browse_experiment_select = st.session_state.jump_experiment
             del st.session_state["jump_experiment"]
 
-        selected_experiment = st.selectbox("Experiment", experiment_names, key="browse_experiment_select")
-
-        num_stations = st.number_input("Number of stations", min_value=1, value=1, step=1)
+        selected_experiment = st.selectbox("🧪 Experiment", experiment_names, key="browse_experiment_select")
+        num_stations = st.number_input("👥 Number of stations", min_value=1, value=1, step=1)
 
         exp_rows = experiments[experiments["Experiment_Name"] == selected_experiment].copy()
         exp_rows["Total_Needed"] = exp_rows["Quantity/Station"] * num_stations
@@ -173,21 +231,21 @@ elif page == "Browse by Prebuilt Experiment/Demo":
 
         merged["Status"] = merged.apply(item_status, axis=1)
 
-        st.subheader(selected_experiment)
-        overall = "✅ Ready" if (merged["Status"] == "✅ Ready").all() else "❌ Short / Incomplete"
-        st.metric("Overall Status", overall)
+        with st.container(border=True):
+            st.subheader(selected_experiment)
+            overall = "✅ Ready" if (merged["Status"] == "✅ Ready").all() else "❌ Short / Incomplete"
+            st.metric("Overall Status", overall)
 
-        st.dataframe(
-            merged[["Item_Name", "Quantity/Station", "Total_Needed", "Qty_Working", "Category", "Shelf", "Status"]],
-            width="stretch"
-        )
+            display_cols = merged[["Item_Name", "Quantity/Station", "Total_Needed", "Qty_Working",
+                                    "Category", "Shelf", "Status"]]
+            st.dataframe(display_cols.style.map(style_status, subset=["Status"]), width="stretch")
 
-# ================= COURSE OVERVIEW =================
-elif page == "Course Overview":
-    st.title("Course Overview")
-    st.caption("All courses currently tracked, with instructor and semester info.")
+# ================= COURSES =================
+elif page == "courses":
+    st.title(f"{PAGE_ICONS['courses']} {PAGE_LABELS['courses']}")
+    st.caption(f"{len(dept)} courses currently tracked, with instructor and semester info.")
 
-    search = st.text_input("Search by course code or title")
+    search = st.text_input("🔎 Search by course code or title")
     filtered_dept = dept.copy()
     if search:
         filtered_dept = filtered_dept[
@@ -197,9 +255,9 @@ elif page == "Course Overview":
 
     st.dataframe(filtered_dept, width="stretch")
 
-# ================= Equipment Check =================
-elif page == "Build a Demo / Equipment Check":
-    st.title("Build a Demo / Equipment Check")
+# ================= BUILD A NEW DEMO =================
+elif page == "build_demo":
+    st.title(f"{PAGE_ICONS['build_demo']} {PAGE_LABELS['build_demo']}")
     st.caption(
         "Build a list of items for a new demo idea. Select an existing item, or type "
         "a new one if it's not in our inventory yet — it'll still show up, flagged as unavailable."
@@ -227,42 +285,41 @@ elif page == "Build a Demo / Equipment Check":
                 )
 
     if st.session_state.demo_items:
-        st.subheader("Items for this demo")
+        with st.container(border=True):
+            st.subheader("Items for this demo")
 
-        check_df = pd.DataFrame(st.session_state.demo_items)
-        merged = check_df.merge(
-            directory[["Name", "Qty_Working", "Category", "Shelf"]],
-            left_on="Item_Name", right_on="Name", how="left"
-        )
+            check_df = pd.DataFrame(st.session_state.demo_items)
+            merged = check_df.merge(
+                directory[["Name", "Qty_Working", "Category", "Shelf"]],
+                left_on="Item_Name", right_on="Name", how="left"
+            )
 
-        def check_status(row):
-            if pd.isna(row["Qty_Working"]):
-                return "🚫 Not in inventory"
-            elif row["Qty_Working"] >= row["Quantity_Needed"]:
-                return "✅ Ready"
-            else:
-                return "❌ Short"
+            def check_status(row):
+                if pd.isna(row["Qty_Working"]):
+                    return "🚫 Not in inventory"
+                elif row["Qty_Working"] >= row["Quantity_Needed"]:
+                    return "✅ Ready"
+                else:
+                    return "❌ Short"
 
-        merged["Status"] = merged.apply(check_status, axis=1)
+            merged["Status"] = merged.apply(check_status, axis=1)
 
-        st.dataframe(
-            merged[["Item_Name", "Quantity_Needed", "Qty_Working", "Category", "Shelf", "Status"]],
-            width="stretch"
-        )
+            display_cols = merged[["Item_Name", "Quantity_Needed", "Qty_Working", "Category", "Shelf", "Status"]]
+            st.dataframe(display_cols.style.map(style_status, subset=["Status"]), width="stretch")
 
-        overall = "✅ Ready" if (merged["Status"] == "✅ Ready").all() else "❌ Missing or short on items"
-        st.metric("Overall Status", overall)
+            overall = "✅ Ready" if (merged["Status"] == "✅ Ready").all() else "❌ Missing or short on items"
+            st.metric("Overall Status", overall)
 
-        remove_choice = st.selectbox(
-            "Remove an item", ["—"] + [d["Item_Name"] for d in st.session_state.demo_items]
-        )
-        if remove_choice != "—" and st.button("✖ Remove selected"):
-            st.session_state.demo_items = [
-                d for d in st.session_state.demo_items if d["Item_Name"] != remove_choice
-            ]
-            st.rerun()
+            remove_choice = st.selectbox(
+                "Remove an item", ["—"] + [d["Item_Name"] for d in st.session_state.demo_items]
+            )
+            if remove_choice != "—" and st.button("✖ Remove selected"):
+                st.session_state.demo_items = [
+                    d for d in st.session_state.demo_items if d["Item_Name"] != remove_choice
+                ]
+                st.rerun()
     else:
-        st.info("No items added yet.")
+        st.info("No items added yet — pick one above or type a new one, then hit ➕ Add.")
 
     st.divider()
 
@@ -277,13 +334,12 @@ elif page == "Build a Demo / Equipment Check":
         inventory_list_text = "\n".join(f"- {name}" for name in item_names_only)
         st.code(inventory_list_text, language=None)
 
-# ================= EXPERIMENT / DEMO DIRECTORY =================
-elif page == "Experiment/Demo Directory":
-    st.title("List of Demos and Experiments")
+# ================= EXPERIMENT LIBRARY =================
+elif page == "experiment_library":
+    st.title(f"{PAGE_ICONS['experiment_library']} {PAGE_LABELS['experiment_library']}")
     st.caption("Browse past experiments by topic. Use 🔍 Check for live inventory status, or 📄 PDF to open the write-up.")
 
     exp_summary = experiments.dropna(subset=["Experiment_Name"]).drop_duplicates(subset=["Experiment_Name"])
-
     categories = sorted(exp_summary["Topic/Category"].dropna().unique())
 
     for category in categories:
@@ -298,10 +354,10 @@ elif page == "Experiment/Demo Directory":
             with st.container(border=True):
                 col1, col2, col3 = st.columns([1, 1, 5])
 
-                with col1:
+                with col3:
                     if st.button("🔍 Check", key=f"check_{name}"):
                         st.session_state.jump_experiment = name
-                        st.session_state.nav_page = "Browse by Prebuilt Experiment/Demo"
+                        st.session_state.pending_page = "check_experiment"
                         st.rerun()
 
                 with col2:
@@ -310,5 +366,5 @@ elif page == "Experiment/Demo Directory":
                     else:
                         st.button("📄 PDF", key=f"pdf_disabled_{name}", disabled=True, help="Write-up not available")
 
-                with col3:
+                with col1:
                     st.write(name)
