@@ -178,11 +178,12 @@ if page == "inventory":
     if filtered.empty:
         st.info("No items match these filters. Try clearing one of the filters above.")
     else:
-        # Name as the index (rather than hide_index) so it renders pinned/frozen on
-        # the left as the table scrolls horizontally — same behavior the default
-        # row-number index used to have.
-        display_df = filtered.set_index("Name")
-        st.dataframe(display_df.style.map(style_status, subset=["Status"]), width="stretch")
+        display_cols = ["Name"] + [c for c in filtered.columns if c != "Name"]
+        st.dataframe(
+            filtered[display_cols].style.map(style_status, subset=["Status"]),
+            width="stretch",
+            hide_index=True,
+        )
         st.caption(f"Showing {len(filtered)} of {len(directory)} items")
 
 # ================= CHECK AN EXPERIMENT =================
@@ -264,8 +265,8 @@ elif page == "check_experiment":
                 st.button("📄 PDF", key="pdf_disabled_check_page", disabled=True, help="Write-up not available")
 
             display_cols = merged[["Item_Name", "Quantity/Station", "Total_Needed", "Qty_Working",
-                                    "Category", "Shelf", "Status"]].set_index("Item_Name")
-            st.dataframe(display_cols.style.map(style_status, subset=["Status"]), width="stretch")
+                                    "Category", "Shelf", "Status"]]
+            st.dataframe(display_cols.style.map(style_status, subset=["Status"]), width="stretch", hide_index=True)
 
 # ================= COURSES =================
 elif page == "courses":
@@ -334,8 +335,8 @@ elif page == "build_demo":
 
             merged["Status"] = merged.apply(check_status, axis=1)
 
-            display_cols = merged[["Item_Name", "Quantity_Needed", "Qty_Working", "Category", "Shelf", "Status"]].set_index("Item_Name")
-            st.dataframe(display_cols.style.map(style_status, subset=["Status"]), width="stretch")
+            display_cols = merged[["Item_Name", "Quantity_Needed", "Qty_Working", "Category", "Shelf", "Status"]]
+            st.dataframe(display_cols.style.map(style_status, subset=["Status"]), width="stretch", hide_index=True)
 
             overall = "✅ Ready" if (merged["Status"] == "✅ Ready").all() else "❌ Missing or short on items"
             st.metric("Overall Status", overall)
