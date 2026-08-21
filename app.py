@@ -238,6 +238,13 @@ elif page == "check_experiment":
             overall = "✅ Ready" if (merged["Status"] == "✅ Ready").all() else "❌ Short / Incomplete"
             st.metric("Overall Status", overall)
 
+            exp_links = exp_rows["Links"].dropna().astype(str).str.strip()
+            exp_links = exp_links[exp_links.str.lower() != "nan"]
+            if not exp_links.empty:
+                st.link_button("📄 PDF", exp_links.iloc[0])
+            else:
+                st.button("📄 PDF", key="pdf_disabled_check_page", disabled=True, help="Write-up not available")
+
             display_cols = merged[["Item_Name", "Quantity/Station", "Total_Needed", "Qty_Working",
                                     "Category", "Shelf", "Status"]]
             st.dataframe(display_cols.style.map(style_status, subset=["Status"]), width="stretch")
