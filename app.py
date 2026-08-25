@@ -149,6 +149,29 @@ page = st.sidebar.radio(
     key="nav_radio",
 )
 
+with st.sidebar.expander("ℹ️ How this works"):
+    st.markdown("""
+This app reads live from the Excel workbook on OneDrive — hit 🔄 above after
+editing it there.
+
+**Storage Room Directory** tab → Inventory page
+- `Qty_Working` blank = "Not yet catalogued"; `0` = "Retired"
+- Don't fill in `Status` or `Used_In_Experiments` — the app calculates both automatically
+
+**Experiment Directory** tab → Check an Experiment/Demo & Library pages
+- One row per *item* needed, grouped by a matching `Experiment_Name`
+- `Item_Name` must exactly match a `Name` in Storage Room Directory, or the app
+  will think that item isn't in stock
+- `Course_Tags` must match a `Course Code` from Department Overview exactly
+  (`Phys 131` ≠ `Phys131`)
+- `Links` = OneDrive PDF URL — leave blank if there's no write-up yet
+
+**Department Overview** tab → Courses page
+- `Course Code` must match the `Course_Tags` spelling above
+
+Full guide: see `README.md` in the GitHub repo.
+""")
+
 # ================= INVENTORY =================
 if page == "inventory":
     st.title(f"{PAGE_ICONS['inventory']} {PAGE_LABELS['inventory']}")
